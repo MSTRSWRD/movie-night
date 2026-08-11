@@ -3,7 +3,7 @@
 
 const CONFIG = {
   // Paste your Apps Script Web App URL here after deploying (see README.md).
-  API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
+  API_URL: "https://script.google.com/macros/s/AKfycbxSkLYxvZES8bARaKp0d22_nZIBJi9d-90hseHuVFMkKLG5-eplQtP-eNIDWOd83jfg0A/execE",
 };
 
 // ---------- small utils ----------

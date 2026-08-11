@@ -42,6 +42,7 @@ function doPost(e) {
     if (action === 'createNight') return jsonOut_({ ok: true, night: createNight_(body.night) });
     if (action === 'updateNight') return jsonOut_({ ok: true, night: updateNight_(body.night) });
     if (action === 'addToRoster') return jsonOut_({ ok: true, roster: addToRoster_(body.name) });
+    if (action === 'removeFromRoster') return jsonOut_({ ok: true, roster: removeFromRoster_(body.name) });
     return jsonOut_({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
     return jsonOut_({ ok: false, error: String(err) });
@@ -123,4 +124,13 @@ function addToRoster_(name) {
     existing.push(name);
   }
   return existing;
+}
+
+function removeFromRoster_(name) {
+  const sheet = getSheet_(ROSTER_SHEET);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === name) { sheet.deleteRow(i + 1); break; }
+  }
+  return getRoster_();
 }

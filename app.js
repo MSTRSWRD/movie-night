@@ -3,7 +3,7 @@
 
 const CONFIG = {
   // Paste your Apps Script Web App URL here after deploying (see README.md).
-  API_URL: "https://script.google.com/macros/s/AKfycbxSkLYxvZES8bARaKp0d22_nZIBJi9d-90hseHuVFMkKLG5-eplQtP-eNIDWOd83jfg0A/exec",
+  API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
 };
 
 // ---------- small utils ----------
@@ -111,6 +111,7 @@ const state = {
   loginMode: null,
   organizerTransferOpen: false,
   finalFourPicks: null,
+  manageRosterOpen: false,
 };
 let pollHandle = null;
 
@@ -152,6 +153,15 @@ async function login(name, isNew) {
     refreshHome();
   } catch (e) {
     setState({ err: "Couldn't sign in — try again." });
+  }
+}
+
+async function removeRosterName(name) {
+  try {
+    const r = await apiPost("removeFromRoster", { name });
+    setState({ roster: r.roster });
+  } catch (e) {
+    setState({ err: "Couldn't remove that name." });
   }
 }
 
@@ -216,6 +226,12 @@ async function updateNight(mutator) {
 // ---------- actions ----------
 async function submitEntry(title) {
   await updateNight((cur) => ({ ...cur, entries: [...cur.entries, { id: genId(), title, submittedBy: state.identity.name }] }));
+}
+async function removeEntry(entryId) {
+  await updateNight((cur) => ({ ...cur, entries: cur.entries.filter((e) => e.id !== entryId) }));
+}
+async function editEntry(entryId, newTitle) {
+  await updateNight((cur) => ({ ...cur, entries: cur.entries.map((e) => (e.id === entryId ? { ...e, title: newTitle } : e)) }));
 }
 async function lockSubmissions() {
   const night = state.night;
@@ -344,8 +360,9 @@ function homeView() {
     ${headerHtml("Movie Night", `Signed in as ${state.identity.name}`)}
     <button class="mnb-btn mnb-btn-ghost" id="logout-btn" style="padding:8px 12px;"><i data-icon="logout"></i></button>
   </div>
-  ${state.creating ? createFormHtml() : `<button class="mnb-btn mnb-btn-gold" id="start-night" style="width:100%;margin-bottom:18px;"><i data-icon="plus"></i> Start a movie night</button>`}
-  <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0 0 10px;letter-spacing:0.05em;">ON THE MARQUEE</p>
+  ${state.creating ? createFormHtml() : `<button class="mnb-btn mnb-btn-gold" id="start-night" style="width:100%;margin-bottom:12px;"><i data-icon="plus"></i> Start a movie night</button>`}
+  ${!state.creating ? rosterPanelHtml() : ""}
+  <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:18px 0 10px;letter-spacing:0.05em;">ON THE MARQUEE</p>
   ${nights.length === 0 ? `<p style="font-size:13.5px;color:var(--smoke);">No movie nights yet. Start one above.</p>` : ""}
   <div style="display:flex;flex-direction:column;gap:10px;">
     ${nights.map((n) => `<button class="mnb-card mnb-night-row" data-id="${esc(n.id)}" style="text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;width:100%;">
@@ -359,6 +376,19 @@ function homeView() {
       </div>
     </button>`).join("")}
   </div>`);
+}
+function rosterPanelHtml() {
+  if (!state.manageRosterOpen) {
+    return `<button class="mnb-btn mnb-btn-ghost" id="open-roster" style="width:100%;margin-bottom:18px;font-size:12px;"><i data-icon="users"></i> Manage roster</button>`;
+  }
+  return `<div class="mnb-card" style="margin-bottom:18px;display:flex;flex-direction:column;gap:8px;">
+    <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0 0 4px;">ROSTER &mdash; remove anyone who shouldn't be listed</p>
+    ${state.roster.map((n) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;">
+      <span style="font-size:14px;">${esc(n)}</span>
+      <button class="roster-remove" data-name="${esc(n)}" style="background:transparent;border:none;color:var(--smoke);cursor:pointer;padding:4px;" title="Remove"><i data-icon="trash" style="font-size:13px;"></i></button>
+    </div>`).join("")}
+    <button class="mnb-btn mnb-btn-ghost" id="close-roster" style="margin-top:6px;font-size:12px;">Done</button>
+  </div>`;
 }
 function createFormHtml() {
   return `<div class="mnb-card" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px;">
@@ -382,6 +412,13 @@ function bindHomeEvents() {
   if (startBtn) startBtn.addEventListener("click", () => setState({ creating: true }));
   const cancelBtn = document.getElementById("cancel-create");
   if (cancelBtn) cancelBtn.addEventListener("click", () => setState({ creating: false }));
+  const openRoster = document.getElementById("open-roster");
+  if (openRoster) openRoster.addEventListener("click", () => setState({ manageRosterOpen: true }));
+  const closeRoster = document.getElementById("close-roster");
+  if (closeRoster) closeRoster.addEventListener("click", () => setState({ manageRosterOpen: false }));
+  document.querySelectorAll(".roster-remove").forEach((btn) => btn.addEventListener("click", () => {
+    if (confirm(`Remove ${btn.dataset.name} from the roster?`)) removeRosterName(btn.dataset.name);
+  }));
   let chosenSize = 16;
   document.querySelectorAll(".bsize-btn").forEach((btn) => btn.addEventListener("click", () => {
     chosenSize = Number(btn.dataset.size);
@@ -430,9 +467,12 @@ function submitPhaseHtml(night, isOrganizer) {
   </div>
   <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0 0 10px;">${night.entries.length} submitted &middot; bracket needs ${night.bracketSize}</p>
   <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
-    ${night.entries.map((e) => `<div class="mnb-card" style="padding:10px 14px;display:flex;justify-content:space-between;">
-      <span style="font-size:14px;">${esc(e.title)}</span>
-      <span class="mnb-mono" style="font-size:11px;color:var(--smoke);">${esc(e.submittedBy)}</span>
+    ${night.entries.map((e) => `<div class="mnb-card" style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="min-width:0;">
+        <span class="entry-title" data-id="${e.id}" data-title="${esc(e.title)}" style="font-size:14px;${isOrganizer ? "cursor:pointer;border-bottom:1px dashed #4A4237;" : ""}">${esc(e.title)}</span>
+        <span class="mnb-mono" style="font-size:11px;color:var(--smoke);margin-left:8px;">${esc(e.submittedBy)}</span>
+      </div>
+      ${isOrganizer ? `<button class="entry-delete" data-id="${e.id}" style="background:transparent;border:none;color:var(--smoke);cursor:pointer;padding:4px;flex-shrink:0;" title="Remove"><i data-icon="trash" style="font-size:14px;"></i></button>` : ""}
     </div>`).join("")}
   </div>
   ${isOrganizer
@@ -454,16 +494,16 @@ function matchupHtml(m) {
     if (resolved) cls += m.winner === id ? " win" : " lose";
     return cls;
   };
+  const winTag = `<span class="mnb-win-tag">Winner</span>`;
   return `<div class="mnb-ticket" data-matchup="${m.id}">
-    ${resolved ? `<div class="mnb-stamp">winner</div>` : ""}
     <div style="display:flex;align-items:stretch;">
       <div class="${sideClass("a", m.aId)}" data-side="a" style="cursor:${clickable ? "pointer" : "default"};">
-        <p style="margin:0;font-weight:600;font-size:14.5px;">${esc(m.aTitle)}</p>
+        <p style="margin:0;font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${esc(m.aTitle)}${resolved && m.winner === m.aId ? winTag : ""}</p>
         <p class="mnb-mono" style="margin:4px 0 0;font-size:11px;color:var(--smoke);">${votesA} vote${votesA !== 1 ? "s" : ""}</p>
       </div>
       <div class="mnb-perf" style="display:flex;align-items:center;padding:0 6px;"><span class="mnb-mono" style="font-size:10px;color:var(--smoke);">vs</span></div>
       <div class="${sideClass("b", m.bId)}" data-side="b" style="cursor:${clickable ? "pointer" : "default"};">
-        <p style="margin:0;font-weight:600;font-size:14.5px;text-align:right;">${esc(m.bTitle)}</p>
+        <p style="margin:0;font-weight:600;font-size:14.5px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;">${resolved && m.winner === m.bId ? winTag : ""}${esc(m.bTitle)}</p>
         <p class="mnb-mono" style="margin:4px 0 0;font-size:11px;color:var(--smoke);text-align:right;">${votesB} vote${votesB !== 1 ? "s" : ""}</p>
       </div>
     </div>
@@ -559,6 +599,14 @@ function bindNightEvents() {
     document.getElementById("entry-title").addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
     const lockBtn = document.getElementById("lock-submissions");
     if (lockBtn) lockBtn.addEventListener("click", lockSubmissions);
+    document.querySelectorAll(".entry-delete").forEach((btn) => btn.addEventListener("click", () => removeEntry(btn.dataset.id)));
+    document.querySelectorAll(".entry-title").forEach((el) => {
+      if (!el.style.cursor) return; // only editable when organizer (cursor set inline)
+      el.addEventListener("click", () => {
+        const next = prompt("Edit title", el.dataset.title);
+        if (next && next.trim() && next.trim() !== el.dataset.title) editEntry(el.dataset.id, next.trim());
+      });
+    });
   }
 
   if (night.phase === "bracket") {

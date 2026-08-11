@@ -61,28 +61,31 @@
   .mnb-perf { border-left:1px dashed #5A5044; }
   .mnb-seal {
     width:38px; height:38px; border-radius:50%; background:var(--marquee); color:#2A1B04;
-    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:18px;
   }
   .mnb-side { flex:1; padding:16px 14px; border-radius:8px; transition:background 0.15s ease; }
   .mnb-side:hover { background:rgba(227,167,46,0.08); }
   .mnb-side.mine { background:rgba(227,167,46,0.16); box-shadow:inset 0 0 0 1.5px var(--marquee); }
   .mnb-side.win { box-shadow:inset 0 0 0 1.5px #6FA35A; }
   .mnb-side.lose { opacity:0.4; }
-  .mnb-stamp {
-    position:absolute; top:8px; right:10px; border:2px solid var(--velvet); color:var(--velvet);
-    font-family:'Anton',sans-serif; font-size:10px; padding:2px 7px; border-radius:4px;
-    transform:rotate(6deg); letter-spacing:0.05em;
+  .mnb-win-tag {
+    display:inline-block; font-family:'Anton',sans-serif; font-size:9px; letter-spacing:0.04em;
+    color:var(--velvet); border:1.5px solid var(--velvet); border-radius:4px; padding:1px 6px;
+    transform:rotate(-3deg); flex-shrink:0; line-height:1.5;
   }
   .mnb-badge { font-family:'IBM Plex Mono',monospace; font-size:11px; padding:4px 9px; border-radius:20px; letter-spacing:0.03em; }
   .mnb-punch {
     width:22px; height:22px; border-radius:50%; border:1.5px solid var(--smoke);
-    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:13px;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:12px;
   }
   .mnb-punch.on { background:var(--marquee); border-color:var(--marquee); color:#2A1B04; }
   code { background:var(--reel-2); padding:2px 6px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:12px; }
 
-  [data-icon] { display:inline-block; width:1em; height:1em; vertical-align:-0.15em; }
-  [data-icon]::before { content: ""; display:block; width:100%; height:100%; }
+  [data-icon] {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:1em; height:1em; vertical-align:middle; flex-shrink:0;
+  }
+  [data-icon] svg { display:block; width:100%; height:100%; }
 </style>
 </head>
 <body>

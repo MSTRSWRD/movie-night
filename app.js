@@ -3,7 +3,7 @@
 
 const CONFIG = {
   // Paste your Apps Script Web App URL here after deploying (see README.md).
-  API_URL: "https://script.google.com/macros/s/AKfycbzybglshqb3Y8aGz-RqIpw2cXoPOyR7AXpjMAcrE5nrjse5Wmc_aQ1UsaA8C9Tw8buSkA/exec",
+  API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
 };
 
 // ---------- small utils ----------
@@ -282,8 +282,40 @@ async function revealResults() {
   await updateNight((cur) => {
     const counts = tallyFinalFour(cur.finalFour, cur.finalFourVotes);
     const results = cur.finalFour.map((m) => ({ ...m, votes: counts[m.id] || 0 })).sort((a, b) => b.votes - a.votes);
+    const top = results[0].votes;
+    const tiedTop = results.filter((r) => r.votes === top);
+    if (tiedTop.length > 1) {
+      return { ...cur, phase: "tiebreaker", results, tiebreaker: { options: tiedTop.map((t) => ({ id: t.id, title: t.title })), votes: {}, tied: false } };
+    }
     return { ...cur, phase: "complete", results };
   });
+}
+async function castTiebreakerVote(optionId) {
+  await updateNight((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: { ...cur.tiebreaker.votes, [state.identity.name]: optionId } } }));
+}
+async function closeTiebreaker() {
+  await updateNight((cur) => {
+    const counts = {};
+    cur.tiebreaker.options.forEach((o) => { counts[o.id] = 0; });
+    Object.values(cur.tiebreaker.votes).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
+    const tallied = cur.tiebreaker.options.map((o) => ({ ...o, votes: counts[o.id] || 0 })).sort((a, b) => b.votes - a.votes);
+    const top = tallied[0].votes;
+    const stillTied = tallied.filter((t) => t.votes === top);
+    if (stillTied.length > 1) {
+      return { ...cur, tiebreaker: { ...cur.tiebreaker, tied: true } };
+    }
+    const winnerId = tallied[0].id;
+    // keep original approval counts for display, just float the tiebreaker winner to the top
+    const reordered = [...cur.results].sort((a, b) => {
+      if (a.id === winnerId) return -1;
+      if (b.id === winnerId) return 1;
+      return b.votes - a.votes;
+    });
+    return { ...cur, phase: "complete", results: reordered, tiebreakerWinnerId: winnerId, tiebreakerTally: tallied };
+  });
+}
+async function revoteTiebreaker() {
+  await updateNight((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: {}, tied: false } }));
 }
 async function transferOrganizer(newOrganizer) {
   await updateNight((cur) => ({ ...cur, organizer: newOrganizer }));
@@ -442,8 +474,9 @@ function nightView() {
   if (night.phase === "submitting") phaseHtml = submitPhaseHtml(night, isOrganizer);
   else if (night.phase === "bracket") phaseHtml = bracketPhaseHtml(night, isOrganizer);
   else if (night.phase === "final-four") phaseHtml = finalFourPhaseHtml(night, isOrganizer);
+  else if (night.phase === "tiebreaker") phaseHtml = tiebreakerPhaseHtml(night, isOrganizer);
   else if (night.phase === "complete") phaseHtml = resultsPhaseHtml(night);
-  const showTransfer = (night.phase === "bracket" || night.phase === "final-four") && isOrganizer;
+  const showTransfer = (night.phase === "bracket" || night.phase === "final-four" || night.phase === "tiebreaker") && isOrganizer;
   return shell(`
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
     <button class="mnb-btn mnb-btn-ghost" id="back-home" style="padding:7px 11px;font-size:12px;">&larr; All nights</button>
@@ -550,20 +583,58 @@ function finalFourPhaseHtml(night, isOrganizer) {
   `;
 }
 
+function tiebreakerPhaseHtml(night, isOrganizer) {
+  const tb = night.tiebreaker;
+  const myVote = tb.votes[state.identity.name];
+  const votedCount = Object.keys(tb.votes).length;
+  let controls;
+  if (isOrganizer) {
+    controls = tb.tied
+      ? `<button class="mnb-btn mnb-btn-gold" id="revote-tiebreaker"><i data-icon="shuffle"></i> Still tied \u2014 revote</button>`
+      : `<button class="mnb-btn mnb-btn-velvet" id="close-tiebreaker"><i data-icon="check"></i> Close tiebreaker vote</button>`;
+  } else {
+    controls = `<p style="font-size:12.5px;color:var(--smoke);">Pick one below. ${esc(night.organizer)} will close voting once everyone's in.</p>`;
+  }
+  return `
+  <p class="mnb-mono" style="font-size:12px;color:var(--marquee);letter-spacing:0.05em;margin:0 0 4px;">TIEBREAKER</p>
+  <p style="font-size:13px;color:var(--smoke);margin:0 0 16px;">${tb.options.length} films tied for the win. Pick the one you want most tonight.${tb.tied ? " Still tied last round \u2014 vote again." : ""}</p>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+    ${tb.options.map((o) => {
+      const count = Object.values(tb.votes).filter((v) => v === o.id).length;
+      const mine = myVote === o.id;
+      return `<div class="tb-pick mnb-card" data-id="${o.id}" style="display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;border:1px solid ${mine ? "var(--marquee)" : "#3A332A"};${mine ? "box-shadow:inset 0 0 0 1.5px var(--marquee);" : ""}">
+        <p style="margin:0;font-weight:600;font-size:15px;">${esc(o.title)}</p>
+        <span class="mnb-mono" style="font-size:11px;color:var(--smoke);">${count} vote${count !== 1 ? "s" : ""}</span>
+      </div>`;
+    }).join("")}
+  </div>
+  <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0 0 12px;">${votedCount} of ${state.roster.length} people have voted</p>
+  <div style="display:flex;flex-direction:column;gap:10px;">${controls}</div>
+  `;
+}
+
 function resultsPhaseHtml(night) {
-  const top = night.results[0] ? night.results[0].votes : 0;
-  const winners = night.results.filter((r) => r.votes === top);
+  let winners, subtitle;
+  if (night.tiebreakerWinnerId) {
+    winners = night.results.filter((r) => r.id === night.tiebreakerWinnerId);
+    const tb = (night.tiebreakerTally || []).find((t) => t.id === night.tiebreakerWinnerId);
+    subtitle = `Won a tiebreaker vote${tb ? ` (${tb.votes} of ${(night.tiebreakerTally || []).reduce((s, t) => s + t.votes, 0)})` : ""}`;
+  } else {
+    const top = night.results[0] ? night.results[0].votes : 0;
+    winners = night.results.filter((r) => r.votes === top);
+    subtitle = `${top} of the room would watch it${winners.length > 1 ? " (tie)" : ""}`;
+  }
   return `
   <p class="mnb-mono" style="font-size:12px;color:var(--marquee);letter-spacing:0.05em;margin:0 0 14px;">TONIGHT'S PICK</p>
   <div class="mnb-card" style="text-align:center;padding:26px 18px;margin-bottom:18px;border:1px solid var(--marquee);">
     <i data-icon="award" style="font-size:26px;color:var(--marquee);"></i>
     <h2 class="mnb-display" style="font-size:24px;margin:10px 0 4px;color:var(--paper);">${esc(winners.map((w) => w.title).join(" & "))}</h2>
-    <p class="mnb-mono" style="margin:0;font-size:12px;color:var(--smoke);">${top} of the room would watch it${winners.length > 1 ? " (tie)" : ""}</p>
+    <p class="mnb-mono" style="margin:0;font-size:12px;color:var(--smoke);">${esc(subtitle)}</p>
   </div>
   <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0 0 10px;">FULL RESULTS</p>
   <div style="display:flex;flex-direction:column;gap:8px;">
     ${night.results.map((r, i) => `<div class="mnb-card" style="display:flex;justify-content:space-between;padding:10px 14px;">
-      <span style="font-size:14px;">${i + 1}. ${esc(r.title)}</span>
+      <span style="font-size:14px;">${i + 1}. ${esc(r.title)}${night.tiebreakerWinnerId === r.id ? ` <span class="mnb-mono" style="color:var(--marquee);font-size:10px;">(tiebreaker winner)</span>` : ""}</span>
       <span class="mnb-mono" style="font-size:12px;color:var(--marquee);">${r.votes} votes</span>
     </div>`).join("")}
   </div>`;
@@ -637,6 +708,14 @@ function bindNightEvents() {
     if (submitBtn) submitBtn.addEventListener("click", () => submitFinalFourBallot([...state.finalFourPicks]));
     const revealBtn = document.getElementById("reveal-results");
     if (revealBtn) revealBtn.addEventListener("click", revealResults);
+  }
+
+  if (night.phase === "tiebreaker") {
+    document.querySelectorAll(".tb-pick").forEach((el) => el.addEventListener("click", () => castTiebreakerVote(el.dataset.id)));
+    const closeBtn = document.getElementById("close-tiebreaker");
+    if (closeBtn) closeBtn.addEventListener("click", closeTiebreaker);
+    const revoteBtn = document.getElementById("revote-tiebreaker");
+    if (revoteBtn) revoteBtn.addEventListener("click", revoteTiebreaker);
   }
 
   const openTransfer = document.getElementById("open-transfer");

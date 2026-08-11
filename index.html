@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Movie Night</title>
+
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#16130F" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Movie Night" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    --ink:#16130F; --paper:#F3ECDD; --marquee:#E3A72E; --velvet:#8C2F39;
+    --reel:#2B2620; --reel-2:#332C24; --smoke:#9C9284;
+    background: var(--ink); color: var(--paper);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mnb-display { font-family:'Anton',sans-serif; letter-spacing:0.02em; text-transform:uppercase; }
+  .mnb-mono { font-family:'IBM Plex Mono',monospace; }
+  .mnb-shell { padding: 24px 20px 60px; max-width: 520px; margin: 0 auto; }
+  .mnb-header { display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .mnb-title { font-size:22px; margin:0; color:var(--marquee); }
+  .mnb-sub { margin:2px 0 0; font-size:11.5px; color:var(--smoke); }
+  .mnb-input, .mnb-select {
+    width:100%; background:var(--reel); border:1px solid #4A4237; color:var(--paper);
+    padding:11px 13px; border-radius:8px; font-family:'IBM Plex Sans',sans-serif; font-size:14px; outline:none;
+  }
+  .mnb-input:focus, .mnb-select:focus { border-color:var(--marquee); }
+  .mnb-input::placeholder { color:var(--smoke); }
+  .mnb-btn {
+    font-family:'IBM Plex Sans',sans-serif; font-weight:600; font-size:13.5px; border-radius:8px;
+    padding:11px 18px; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:7px;
+    justify-content:center; transition:transform 0.12s ease, opacity 0.12s ease;
+  }
+  .mnb-btn:active { transform:scale(0.97); }
+  .mnb-btn:disabled { opacity:0.35; cursor:not-allowed; }
+  .mnb-btn-gold { background:var(--marquee); color:#2A1B04; }
+  .mnb-btn-velvet { background:var(--velvet); color:var(--paper); }
+  .mnb-btn-ghost { background:transparent; color:var(--paper); border:1px solid #4A4237; }
+  .mnb-btn-ghost:hover { border-color:var(--marquee); }
+  .mnb-card { background:var(--reel); border-radius:12px; padding:18px; border:1px solid #3A332A; }
+  .mnb-ticket { position:relative; background:var(--reel); border-radius:12px; border:1px solid #3A332A; overflow:hidden; }
+  .mnb-ticket::before, .mnb-ticket::after {
+    content:''; position:absolute; width:20px; height:20px; background:var(--ink);
+    border-radius:50%; top:50%; transform:translateY(-50%); z-index:2;
+  }
+  .mnb-ticket::before { left:-10px; }
+  .mnb-ticket::after { right:-10px; }
+  .mnb-perf { border-left:1px dashed #5A5044; }
+  .mnb-seal {
+    width:38px; height:38px; border-radius:50%; background:var(--marquee); color:#2A1B04;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .mnb-side { flex:1; padding:16px 14px; border-radius:8px; transition:background 0.15s ease; }
+  .mnb-side:hover { background:rgba(227,167,46,0.08); }
+  .mnb-side.mine { background:rgba(227,167,46,0.16); box-shadow:inset 0 0 0 1.5px var(--marquee); }
+  .mnb-side.win { box-shadow:inset 0 0 0 1.5px #6FA35A; }
+  .mnb-side.lose { opacity:0.4; }
+  .mnb-stamp {
+    position:absolute; top:8px; right:10px; border:2px solid var(--velvet); color:var(--velvet);
+    font-family:'Anton',sans-serif; font-size:10px; padding:2px 7px; border-radius:4px;
+    transform:rotate(6deg); letter-spacing:0.05em;
+  }
+  .mnb-badge { font-family:'IBM Plex Mono',monospace; font-size:11px; padding:4px 9px; border-radius:20px; letter-spacing:0.03em; }
+  .mnb-punch {
+    width:22px; height:22px; border-radius:50%; border:1.5px solid var(--smoke);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:13px;
+  }
+  .mnb-punch.on { background:var(--marquee); border-color:var(--marquee); color:#2A1B04; }
+  code { background:var(--reel-2); padding:2px 6px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:12px; }
+
+  [data-icon] { display:inline-block; width:1em; height:1em; vertical-align:-0.15em; }
+  [data-icon]::before { content: ""; display:block; width:100%; height:100%; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

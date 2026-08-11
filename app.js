@@ -57,6 +57,12 @@ function closeRoundVotes(matchups) {
     Object.values(m.votes).forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
     if (counts.a > counts.b) return { ...m, winner: m.aId, tied: false };
     if (counts.b > counts.a) return { ...m, winner: m.bId, tied: false };
+    if (counts.a === 0 && counts.b === 0) {
+      // nobody voted on this matchup at all — don't force an endless
+      // reshuffle over a 0-0 "tie"; the organizer chose to close anyway,
+      // so just flip a coin rather than stall the bracket forever.
+      return { ...m, winner: Math.random() < 0.5 ? m.aId : m.bId, tied: false, undecided: true };
+    }
     return { ...m, winner: null, tied: true };
   });
 }
@@ -112,6 +118,7 @@ const state = {
   organizerTransferOpen: false,
   finalFourPicks: null,
   manageRosterOpen: false,
+  manageNightsOpen: false,
 };
 let pollHandle = null;
 
@@ -165,6 +172,25 @@ async function removeRosterName(name) {
   }
 }
 
+async function setNightArchived(id, archived) {
+  try {
+    const res = await apiGet("getNight", { id });
+    if (!res.night) return;
+    await apiPost("updateNight", { night: { ...res.night, archived } });
+    refreshHome();
+  } catch (e) {
+    setState({ err: "Couldn't update that movie night." });
+  }
+}
+async function deleteNightForever(id) {
+  try {
+    await apiPost("deleteNight", { id });
+    refreshHome();
+  } catch (e) {
+    setState({ err: "Couldn't delete that movie night." });
+  }
+}
+
 function logout() {
   localStorage.removeItem("mnb-identity");
   stopPolling();
@@ -181,10 +207,14 @@ function stopPolling() {
   if (pollHandle) clearInterval(pollHandle);
   pollHandle = null;
 }
+let mutationInFlight = 0;
+
 async function fetchNight(id) {
   try {
     const res = await apiGet("getNight", { id });
-    if (res.night) setState({ night: res.night });
+    // Don't let a poll overwrite the screen mid-action — a vote/entry click
+    // that's still saving would otherwise flicker or appear to revert.
+    if (res.night && mutationInFlight === 0) setState({ night: res.night });
   } catch (e) { /* ignore transient poll errors */ }
 }
 function goHome() {
@@ -210,28 +240,71 @@ async function createNight({ name, theme, bracketSize }) {
   }
 }
 
+// Fetch-first: used for less-frequent, organizer-driven actions (advancing a
+// round, reshuffling, locking submissions) where a beat of latency is fine
+// and we want the freshest possible base before applying.
 async function updateNight(mutator) {
-  const current = state.night;
-  if (!current) return;
-  const next = mutator(current);
-  setState({ night: next }); // optimistic
+  if (!state.night) return;
+  const nightId = state.night.id;
+  mutationInFlight++;
   try {
-    await apiPost("updateNight", { night: next });
-  } catch (e) {
-    setState({ err: "Couldn't save that — refreshing." });
-    fetchNight(current.id);
+    let base = state.night;
+    try {
+      const res = await apiGet("getNight", { id: nightId });
+      if (res.night) base = res.night;
+    } catch (e) {
+      // fall back to local state if the fresh fetch fails; still better than nothing
+    }
+    const next = mutator(base);
+    setState({ night: next });
+    try {
+      await apiPost("updateNight", { night: next });
+    } catch (e) {
+      setState({ err: "Couldn't save that — refreshing." });
+      fetchNight(nightId);
+    }
+  } finally {
+    mutationInFlight--;
+  }
+}
+
+// Optimistic-first: for frequent, per-person actions (casting a vote,
+// submitting a film) where instant feedback matters most. Applies locally
+// right away, then reconciles against the freshest server copy before
+// persisting so a concurrent change from someone else isn't silently lost.
+async function updateNightFast(mutator) {
+  if (!state.night) return;
+  const nightId = state.night.id;
+  mutationInFlight++;
+  try {
+    setState({ night: mutator(state.night) });
+    let base = state.night;
+    try {
+      const res = await apiGet("getNight", { id: nightId });
+      if (res.night) base = res.night;
+    } catch (e) { /* keep the optimistic base if the fetch fails */ }
+    const next = mutator(base);
+    setState({ night: next });
+    try {
+      await apiPost("updateNight", { night: next });
+    } catch (e) {
+      setState({ err: "Couldn't save that — refreshing." });
+      fetchNight(nightId);
+    }
+  } finally {
+    mutationInFlight--;
   }
 }
 
 // ---------- actions ----------
 async function submitEntry(title) {
-  await updateNight((cur) => ({ ...cur, entries: [...cur.entries, { id: genId(), title, submittedBy: state.identity.name }] }));
+  await updateNightFast((cur) => ({ ...cur, entries: [...cur.entries, { id: genId(), title, submittedBy: state.identity.name }] }));
 }
 async function removeEntry(entryId) {
-  await updateNight((cur) => ({ ...cur, entries: cur.entries.filter((e) => e.id !== entryId) }));
+  await updateNightFast((cur) => ({ ...cur, entries: cur.entries.filter((e) => e.id !== entryId) }));
 }
 async function editEntry(entryId, newTitle) {
-  await updateNight((cur) => ({ ...cur, entries: cur.entries.map((e) => (e.id === entryId ? { ...e, title: newTitle } : e)) }));
+  await updateNightFast((cur) => ({ ...cur, entries: cur.entries.map((e) => (e.id === entryId ? { ...e, title: newTitle } : e)) }));
 }
 async function lockSubmissions() {
   const night = state.night;
@@ -246,7 +319,7 @@ async function lockSubmissions() {
   await updateNight((cur) => ({ ...cur, phase: "bracket", rounds: [round1], currentRoundIndex: 0 }));
 }
 async function castVote(matchupId, side) {
-  await updateNight((cur) => {
+  await updateNightFast((cur) => {
     const rounds = cur.rounds.map((r, i) => {
       if (i !== cur.currentRoundIndex) return r;
       return r.map((m) => (m.id === matchupId ? { ...m, votes: { ...m.votes, [state.identity.name]: side } } : m));
@@ -276,7 +349,7 @@ async function advanceRound() {
   });
 }
 async function submitFinalFourBallot(picks) {
-  await updateNight((cur) => ({ ...cur, finalFourVotes: { ...cur.finalFourVotes, [state.identity.name]: picks } }));
+  await updateNightFast((cur) => ({ ...cur, finalFourVotes: { ...cur.finalFourVotes, [state.identity.name]: picks } }));
 }
 async function revealResults() {
   await updateNight((cur) => {
@@ -291,7 +364,7 @@ async function revealResults() {
   });
 }
 async function castTiebreakerVote(optionId) {
-  await updateNight((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: { ...cur.tiebreaker.votes, [state.identity.name]: optionId } } }));
+  await updateNightFast((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: { ...cur.tiebreaker.votes, [state.identity.name]: optionId } } }));
 }
 async function closeTiebreaker() {
   await updateNight((cur) => {
@@ -327,6 +400,19 @@ const PHASE_LABEL = { submitting: "Taking submissions", bracket: "Voting", "fina
 
 function render() {
   const app = document.getElementById("app");
+  // Preserve in-progress typing in a focused input/select across re-renders
+  // (polling re-renders the whole screen every few seconds).
+  const active = document.activeElement;
+  let savedFocus = null;
+  if (active && app.contains(active) && active.id && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) {
+    savedFocus = {
+      id: active.id,
+      value: active.value,
+      selStart: typeof active.selectionStart === "number" ? active.selectionStart : null,
+      selEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+    };
+  }
+
   if (state.screen === "loading") { app.innerHTML = loadingView(); }
   else if (state.screen === "config-error") { app.innerHTML = configErrorView(); }
   else if (state.screen === "login") { app.innerHTML = loginView(); bindLoginEvents(); }
@@ -336,6 +422,17 @@ function render() {
     else { app.innerHTML = nightView(); bindNightEvents(); }
   }
   renderIcons();
+
+  if (savedFocus) {
+    const el = document.getElementById(savedFocus.id);
+    if (el) {
+      el.value = savedFocus.value;
+      el.focus();
+      if (savedFocus.selStart !== null && el.setSelectionRange) {
+        try { el.setSelectionRange(savedFocus.selStart, savedFocus.selEnd); } catch (e) { /* not a text-selectable input */ }
+      }
+    }
+  }
 }
 
 function shell(inner) {
@@ -386,7 +483,8 @@ function bindLoginEvents() {
 }
 
 function homeView() {
-  const nights = state.nightsIndex;
+  const allNights = state.nightsIndex;
+  const nights = state.manageNightsOpen ? allNights : allNights.filter((n) => !n.archived);
   return shell(`
   <div style="display:flex;justify-content:space-between;align-items:flex-start;">
     ${headerHtml("Movie Night", `Signed in as ${state.identity.name}`)}
@@ -394,19 +492,27 @@ function homeView() {
   </div>
   ${state.creating ? createFormHtml() : `<button class="mnb-btn mnb-btn-gold" id="start-night" style="width:100%;margin-bottom:12px;"><i data-icon="plus"></i> Start a movie night</button>`}
   ${!state.creating ? rosterPanelHtml() : ""}
-  <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:18px 0 10px;letter-spacing:0.05em;">ON THE MARQUEE</p>
-  ${nights.length === 0 ? `<p style="font-size:13.5px;color:var(--smoke);">No movie nights yet. Start one above.</p>` : ""}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px;">
+    <p class="mnb-mono" style="font-size:11px;color:var(--smoke);margin:0;letter-spacing:0.05em;">ON THE MARQUEE</p>
+    <button class="mnb-btn mnb-btn-ghost" id="toggle-manage-nights" style="padding:4px 10px;font-size:10.5px;">${state.manageNightsOpen ? "Done" : "Manage"}</button>
+  </div>
+  ${nights.length === 0 ? `<p style="font-size:13.5px;color:var(--smoke);">${state.manageNightsOpen ? "No movie nights yet." : "No movie nights yet. Start one above."}</p>` : ""}
   <div style="display:flex;flex-direction:column;gap:10px;">
-    ${nights.map((n) => `<button class="mnb-card mnb-night-row" data-id="${esc(n.id)}" style="text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;width:100%;">
-      <div>
-        <p style="margin:0;font-weight:600;font-size:14.5px;">${esc(n.name)}${n.winner ? ` <span style="color:var(--marquee);font-weight:400;">&mdash; ${esc(n.winner)}</span>` : ""}</p>
+    ${nights.map((n) => `<div class="mnb-card mnb-night-row" data-id="${esc(n.id)}" style="display:flex;justify-content:space-between;align-items:center;width:100%;${n.archived ? "opacity:0.5;" : ""}">
+      <div class="night-open" data-id="${esc(n.id)}" style="cursor:${state.manageNightsOpen ? "default" : "pointer"};min-width:0;">
+        <p style="margin:0;font-weight:600;font-size:14.5px;">${esc(n.name)}${n.winner ? ` <span style="color:var(--marquee);font-weight:400;">&mdash; ${esc(n.winner)}</span>` : ""}${n.archived ? ` <span class="mnb-mono" style="color:var(--smoke);font-size:10px;">(archived)</span>` : ""}</p>
         <p class="mnb-mono" style="margin:3px 0 0;font-size:11px;color:var(--smoke);">${esc(n.theme)} &middot; ${esc(n.bracketSize)} films &middot; ${new Date(n.createdAt).toLocaleDateString()}</p>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="mnb-badge" style="background:rgba(227,167,46,0.14);color:var(--marquee);">${esc(PHASE_LABEL[n.phase] || n.phase)}</span>
-        <i data-icon="chevron-right" style="color:var(--smoke);"></i>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        ${state.manageNightsOpen ? `
+          <button class="night-archive-toggle" data-id="${esc(n.id)}" data-archived="${n.archived ? "1" : "0"}" style="background:transparent;border:none;color:var(--smoke);cursor:pointer;padding:4px;" title="${n.archived ? "Unarchive" : "Archive"}"><i data-icon="${n.archived ? "restore" : "archive"}" style="font-size:15px;"></i></button>
+          <button class="night-delete" data-id="${esc(n.id)}" data-name="${esc(n.name)}" style="background:transparent;border:none;color:var(--smoke);cursor:pointer;padding:4px;" title="Delete permanently"><i data-icon="trash" style="font-size:15px;"></i></button>
+        ` : `
+          <span class="mnb-badge" style="background:rgba(227,167,46,0.14);color:var(--marquee);">${esc(PHASE_LABEL[n.phase] || n.phase)}</span>
+          <i data-icon="chevron-right" style="color:var(--smoke);"></i>
+        `}
       </div>
-    </button>`).join("")}
+    </div>`).join("")}
   </div>`);
 }
 function rosterPanelHtml() {
@@ -464,7 +570,17 @@ function bindHomeEvents() {
     if (!name || !theme) return;
     createNight({ name, theme, bracketSize: chosenSize });
   });
-  document.querySelectorAll(".mnb-night-row").forEach((row) => row.addEventListener("click", () => openNight(row.dataset.id)));
+  document.querySelectorAll(".night-open").forEach((el) => {
+    if (!state.manageNightsOpen) el.addEventListener("click", () => openNight(el.dataset.id));
+  });
+  const toggleManageNights = document.getElementById("toggle-manage-nights");
+  if (toggleManageNights) toggleManageNights.addEventListener("click", () => setState({ manageNightsOpen: !state.manageNightsOpen }));
+  document.querySelectorAll(".night-archive-toggle").forEach((btn) => btn.addEventListener("click", () => {
+    setNightArchived(btn.dataset.id, btn.dataset.archived !== "1");
+  }));
+  document.querySelectorAll(".night-delete").forEach((btn) => btn.addEventListener("click", () => {
+    if (confirm(`Permanently delete "${btn.dataset.name}"? This can't be undone.`)) deleteNightForever(btn.dataset.id);
+  }));
 }
 
 function nightView() {
@@ -529,6 +645,7 @@ function matchupHtml(m) {
   };
   const winTag = `<span class="mnb-win-tag">Winner</span>`;
   return `<div class="mnb-ticket" data-matchup="${m.id}">
+    ${m.undecided ? `<p class="mnb-mono" style="margin:8px 12px 0;font-size:10px;color:var(--smoke);">no votes cast &mdash; decided by coin flip</p>` : ""}
     <div style="display:flex;align-items:stretch;">
       <div class="${sideClass("a", m.aId)}" data-side="a" style="cursor:${clickable ? "pointer" : "default"};">
         <p style="margin:0;font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${esc(m.aTitle)}${resolved && m.winner === m.aId ? winTag : ""}</p>
@@ -539,6 +656,17 @@ function matchupHtml(m) {
         <p style="margin:0;font-weight:600;font-size:14.5px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;">${resolved && m.winner === m.bId ? winTag : ""}${esc(m.bTitle)}</p>
         <p class="mnb-mono" style="margin:4px 0 0;font-size:11px;color:var(--smoke);text-align:right;">${votesB} vote${votesB !== 1 ? "s" : ""}</p>
       </div>
+    </div>
+  </div>`;
+}
+
+function votedTrackerHtml(round, roster) {
+  const votedNames = new Set();
+  round.forEach((m) => Object.keys(m.votes).forEach((n) => votedNames.add(n)));
+  return `<div style="margin:0 0 16px;">
+    <p class="mnb-mono" style="font-size:10.5px;color:var(--smoke);margin:0 0 6px;letter-spacing:0.05em;">WHO'S VOTED &mdash; ${votedNames.size} of ${roster.length}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+      ${roster.map((n) => `<span class="mnb-badge" style="background:${votedNames.has(n) ? "rgba(227,167,46,0.16)" : "rgba(255,255,255,0.04)"};color:${votedNames.has(n) ? "var(--marquee)" : "var(--smoke)"};">${esc(n)}</span>`).join("")}
     </div>
   </div>`;
 }
@@ -554,10 +682,11 @@ function bracketPhaseHtml(night, isOrganizer) {
     else if (anyTied) controls = `<button class="mnb-btn mnb-btn-gold" id="reshuffle-btn"><i data-icon="shuffle"></i> Reshuffle tied matchups</button>`;
     else if (allResolved) controls = `<button class="mnb-btn mnb-btn-velvet" id="advance-round"><i data-icon="arrow-right"></i> ${round.length === 4 ? "Advance to final four" : "Advance to next round"}</button>`;
   } else if (!allResolved) {
-    controls = `<p style="font-size:12.5px;color:var(--smoke);">Vote above. ${esc(night.organizer)} will close the round once everyone's in.</p>`;
+    controls = `<p style="font-size:12.5px;color:var(--smoke);">Vote above. ${esc(night.organizer)} can close the round whenever there's enough in.</p>`;
   }
   return `
   <p class="mnb-mono" style="font-size:12px;color:var(--marquee);letter-spacing:0.05em;margin:0 0 14px;">${roundLabel(round.length * 2).toUpperCase()}</p>
+  ${votedTrackerHtml(round, state.roster)}
   <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:20px;">${round.map(matchupHtml).join("")}</div>
   <div style="display:flex;flex-direction:column;gap:10px;">${controls}</div>
   `;
@@ -664,6 +793,7 @@ function bindNightEvents() {
       const input = document.getElementById("entry-title");
       const title = input.value.trim();
       if (!title) return;
+      input.value = "";
       submitEntry(title);
     };
     document.getElementById("entry-submit").addEventListener("click", submit);

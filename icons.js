@@ -14,6 +14,8 @@ const ICON_PATHS = {
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/><path d="M10 11v6M14 11v6"/>',
   pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>',
+  archive: '<path d="M3 7h18v3H3z"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M10 14h4"/>',
+  restore: '<path d="M3 7h18v3H3z"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M12 17v-4M10.5 14.5L12 13l1.5 1.5"/>',
 };
 
 function renderIcons() {

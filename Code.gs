@@ -4,8 +4,9 @@
 
 const NIGHTS_SHEET = 'Nights';
 const ROSTER_SHEET = 'Roster';
-const NIGHTS_HEADER = ['id', 'name', 'theme', 'bracketSize', 'phase', 'organizer', 'createdAt', 'winner', 'data'];
+const NIGHTS_HEADER = ['id', 'name', 'theme', 'bracketSize', 'phase', 'organizer', 'createdAt', 'winner', 'data', 'archived'];
 const ROSTER_HEADER = ['name', 'addedAt'];
+const NIGHT_KNOWN_FIELDS = ['id', 'name', 'theme', 'bracketSize', 'phase', 'organizer', 'createdAt', 'archived'];
 
 function getSheet_(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -13,6 +14,15 @@ function getSheet_(name) {
   if (!sheet) {
     sheet = ss.insertSheet(name);
     sheet.appendRow(name === NIGHTS_SHEET ? NIGHTS_HEADER : ROSTER_HEADER);
+    return sheet;
+  }
+  // Migrate older sheets created before the 'archived' column existed.
+  if (name === NIGHTS_SHEET) {
+    const lastCol = Math.max(sheet.getLastColumn(), 1);
+    const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    if (header.indexOf('archived') === -1) {
+      sheet.getRange(1, lastCol + 1).setValue('archived');
+    }
   }
   return sheet;
 }
@@ -41,6 +51,7 @@ function doPost(e) {
     const action = body.action;
     if (action === 'createNight') return jsonOut_({ ok: true, night: createNight_(body.night) });
     if (action === 'updateNight') return jsonOut_({ ok: true, night: updateNight_(body.night) });
+    if (action === 'deleteNight') return jsonOut_({ ok: true, deleted: deleteNight_(body.id) });
     if (action === 'addToRoster') return jsonOut_({ ok: true, roster: addToRoster_(body.name) });
     if (action === 'removeFromRoster') return jsonOut_({ ok: true, roster: removeFromRoster_(body.name) });
     return jsonOut_({ ok: false, error: 'Unknown action: ' + action });
@@ -57,7 +68,7 @@ function listNights_() {
   const data = rows.slice(1);
   return data.filter((r) => r[0]).map((r) => ({
     id: r[0], name: r[1], theme: r[2], bracketSize: r[3], phase: r[4],
-    organizer: r[5], createdAt: r[6], winner: r[7],
+    organizer: r[5], createdAt: r[6], winner: r[7], archived: !!r[9],
   })).reverse();
 }
 
@@ -77,7 +88,7 @@ function getNight_(id) {
   const extra = JSON.parse(vals[8] || '{}');
   return Object.assign({
     id: vals[0], name: vals[1], theme: vals[2], bracketSize: vals[3], phase: vals[4],
-    organizer: vals[5], createdAt: vals[6], winner: vals[7],
+    organizer: vals[5], createdAt: vals[6], winner: vals[7], archived: !!vals[9],
   }, extra);
 }
 
@@ -85,7 +96,7 @@ function createNight_(night) {
   const sheet = getSheet_(NIGHTS_SHEET);
   const { id, name, theme, bracketSize, phase, organizer, createdAt } = night;
   const extra = stripKnown_(night);
-  sheet.appendRow([id, name, theme, bracketSize, phase, organizer, createdAt, '', JSON.stringify(extra)]);
+  sheet.appendRow([id, name, theme, bracketSize, phase, organizer, createdAt, '', JSON.stringify(extra), false]);
   return night;
 }
 
@@ -93,21 +104,28 @@ function updateNight_(night) {
   const sheet = getSheet_(NIGHTS_SHEET);
   const row = findRow_(sheet, night.id);
   if (row === -1) throw new Error('Movie night not found: ' + night.id);
-  const { id, name, theme, bracketSize, phase, organizer, createdAt } = night;
+  const { id, name, theme, bracketSize, phase, organizer, createdAt, archived } = night;
   const extra = stripKnown_(night);
   let winner = '';
   if (phase === 'complete' && extra.results && extra.results.length) {
     const top = extra.results[0].votes;
     winner = extra.results.filter((r) => r.votes === top).map((r) => r.title).join(' & ');
   }
-  sheet.getRange(row, 1, 1, NIGHTS_HEADER.length).setValues([[id, name, theme, bracketSize, phase, organizer, createdAt, winner, JSON.stringify(extra)]]);
+  sheet.getRange(row, 1, 1, NIGHTS_HEADER.length).setValues([[id, name, theme, bracketSize, phase, organizer, createdAt, winner, JSON.stringify(extra), !!archived]]);
   return night;
 }
 
+function deleteNight_(id) {
+  const sheet = getSheet_(NIGHTS_SHEET);
+  const row = findRow_(sheet, id);
+  if (row === -1) return false;
+  sheet.deleteRow(row);
+  return true;
+}
+
 function stripKnown_(night) {
-  const known = ['id', 'name', 'theme', 'bracketSize', 'phase', 'organizer', 'createdAt'];
   const extra = {};
-  Object.keys(night).forEach((k) => { if (known.indexOf(k) === -1) extra[k] = night[k]; });
+  Object.keys(night).forEach((k) => { if (NIGHT_KNOWN_FIELDS.indexOf(k) === -1) extra[k] = night[k]; });
   return extra;
 }
 

@@ -81,6 +81,19 @@
   .mnb-punch.on { background:var(--marquee); border-color:var(--marquee); color:#2A1B04; }
   code { background:var(--reel-2); padding:2px 6px; border-radius:4px; font-family:'IBM Plex Mono',monospace; font-size:12px; }
 
+  .mnb-loading-reel { display:inline-block; animation: mnbReelSpin 1.6s linear infinite; }
+  @keyframes mnbReelSpin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .mnb-loading-dots span { display:inline-block; animation: mnbDotPulse 1.2s ease-in-out infinite; }
+  .mnb-loading-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .mnb-loading-dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes mnbDotPulse {
+    0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+    30% { opacity: 1; transform: translateY(-2px); }
+  }
+
   [data-icon] {
     display:inline-flex; align-items:center; justify-content:center;
     width:1em; height:1em; vertical-align:middle; flex-shrink:0;

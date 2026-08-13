@@ -1,6 +1,7 @@
 // Tiny inline icon set — avoids depending on an external icon-font CDN.
 const ICON_PATHS = {
   film: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/>',
+  reel: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="6.5" r="1.7"/><circle cx="16.76" cy="14.75" r="1.7"/><circle cx="7.24" cy="14.75" r="1.7"/><path d="M12 12L12 6.5M12 12L16.76 14.75M12 12L7.24 14.75"/>',
   "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',

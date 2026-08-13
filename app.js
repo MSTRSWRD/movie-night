@@ -3,7 +3,7 @@
 
 const CONFIG = {
   // Paste your Apps Script Web App URL here after deploying (see README.md).
-  API_URL: "https://script.google.com/macros/s/AKfycbzybglshqb3Y8aGz-RqIpw2cXoPOyR7AXpjMAcrE5nrjse5Wmc_aQ1UsaA8C9Tw8buSkA/exec",
+  API_URL: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE",
 };
 
 // ---------- small utils ----------
@@ -207,7 +207,6 @@ function stopPolling() {
   if (pollHandle) clearInterval(pollHandle);
   pollHandle = null;
 }
-let mutationInFlight = 0;
 
 async function fetchNight(id) {
   try {
@@ -240,10 +239,20 @@ async function createNight({ name, theme, bracketSize }) {
   }
 }
 
-// Fetch-first: used for less-frequent, organizer-driven actions (advancing a
-// round, reshuffling, locking submissions) where a beat of latency is fine
-// and we want the freshest possible base before applying.
-async function updateNight(mutator) {
+let mutationInFlight = 0;
+let mutationQueue = Promise.resolve();
+
+// All saves funnel through this queue so they run strictly one at a time.
+// Without this, two quick actions (e.g. adding two films back to back) could
+// each fetch "the latest" before the other had finished saving, and whichever
+// save landed last would silently overwrite the other's addition.
+function enqueueMutation(fn) {
+  const run = mutationQueue.then(fn, fn);
+  mutationQueue = run.then(() => {}, () => {}); // keep the chain alive even after an error
+  return run;
+}
+
+async function persistMutation(mutator) {
   if (!state.night) return;
   const nightId = state.night.id;
   mutationInFlight++;
@@ -268,32 +277,22 @@ async function updateNight(mutator) {
   }
 }
 
+// Fetch-first: used for less-frequent, organizer-driven actions (advancing a
+// round, reshuffling, locking submissions) where a beat of latency before
+// anything visibly changes is fine.
+async function updateNight(mutator) {
+  if (!state.night) return;
+  return enqueueMutation(() => persistMutation(mutator));
+}
+
 // Optimistic-first: for frequent, per-person actions (casting a vote,
-// submitting a film) where instant feedback matters most. Applies locally
-// right away, then reconciles against the freshest server copy before
-// persisting so a concurrent change from someone else isn't silently lost.
+// submitting a film) where instant feedback matters most. Shows the change
+// immediately (unqueued, just for responsiveness), then the actual save is
+// queued behind any other in-flight saves so they land in the right order.
 async function updateNightFast(mutator) {
   if (!state.night) return;
-  const nightId = state.night.id;
-  mutationInFlight++;
-  try {
-    setState({ night: mutator(state.night) });
-    let base = state.night;
-    try {
-      const res = await apiGet("getNight", { id: nightId });
-      if (res.night) base = res.night;
-    } catch (e) { /* keep the optimistic base if the fetch fails */ }
-    const next = mutator(base);
-    setState({ night: next });
-    try {
-      await apiPost("updateNight", { night: next });
-    } catch (e) {
-      setState({ err: "Couldn't save that — refreshing." });
-      fetchNight(nightId);
-    }
-  } finally {
-    mutationInFlight--;
-  }
+  setState({ night: mutator(state.night) });
+  return enqueueMutation(() => persistMutation(mutator));
 }
 
 // ---------- actions ----------
@@ -448,7 +447,12 @@ function headerHtml(title, sub) {
   </div>`;
 }
 function loadingView() {
-  return shell(`<div style="padding:60px 0;text-align:center;"><i data-icon="film" style="font-size:28px;color:var(--marquee)"></i><p class="mnb-mono" style="margin-top:10px;color:var(--smoke);font-size:13px;">Loading&hellip;</p></div>`);
+  return shell(`<div style="padding:70px 0;text-align:center;">
+    <div class="mnb-seal" style="margin:0 auto 14px;width:52px;height:52px;font-size:22px;">
+      <i data-icon="reel" class="mnb-loading-reel"></i>
+    </div>
+    <p class="mnb-mono" style="color:var(--smoke);font-size:13px;">Loading<span class="mnb-loading-dots"><span>.</span><span>.</span><span>.</span></span></p>
+  </div>`);
 }
 function configErrorView() {
   return shell(`${headerHtml("Movie Night", "Setup needed")}

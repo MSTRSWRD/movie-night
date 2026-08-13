@@ -3,19 +3,11 @@
 
 const CONFIG = {
   // Paste your Apps Script Web App URL here after deploying (see README.md).
-  API_URL: "https://script.google.com/macros/s/AKfycbzybglshqb3Y8aGz-RqIpw2cXoPOyR7AXpjMAcrE5nrjse5Wmc_aQ1UsaA8C9Tw8buSkA/exec",
+  API_URL: "https://script.google.com/macros/s/AKfycbyl5HxC2rAlyGoVOlc7DHmtzFKp00Vu3Bqmg_zgvCawb7ifB7U5cE14eYC-yE7x6-3VoA/exec",
 };
 
 // ---------- small utils ----------
 const genId = () => Math.random().toString(36).slice(2, 10);
-const shuffle = (arr) => {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-};
 function roundLabel(enteringCount) {
   if (enteringCount >= 32) return "Round of 32";
   if (enteringCount === 16) return "Round of 16";
@@ -25,66 +17,10 @@ function roundLabel(enteringCount) {
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-
-// ---------- bracket logic ----------
-function buildRound1(entries, bracketSize) {
-  let pool = shuffle(entries.map((e) => ({ id: e.id, title: e.title })));
-  while (pool.length < bracketSize) pool.push({ id: `BYE-${genId()}`, title: "BYE", bye: true });
-  if (pool.length > bracketSize) pool = pool.slice(0, bracketSize);
-  const matchups = [];
-  for (let i = 0; i < pool.length; i += 2) {
-    const a = pool[i], b = pool[i + 1];
-    let winner = null;
-    if (a.bye && !b.bye) winner = b.id;
-    else if (b.bye && !a.bye) winner = a.id;
-    matchups.push({ id: genId(), aId: a.id, aTitle: a.title, bId: b.id, bTitle: b.title, votes: {}, winner, tied: false });
-  }
-  return matchups;
-}
-function buildNextRound(prevMatchups) {
-  const winners = prevMatchups.map((m) => ({ id: m.winner, title: m.winner === m.aId ? m.aTitle : m.bTitle }));
-  const matchups = [];
-  for (let i = 0; i < winners.length; i += 2) {
-    const a = winners[i], b = winners[i + 1];
-    matchups.push({ id: genId(), aId: a.id, aTitle: a.title, bId: b.id, bTitle: b.title, votes: {}, winner: null, tied: false });
-  }
-  return matchups;
-}
-function closeRoundVotes(matchups) {
-  return matchups.map((m) => {
-    if (m.winner) return m;
-    const counts = { a: 0, b: 0 };
-    Object.values(m.votes).forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
-    if (counts.a > counts.b) return { ...m, winner: m.aId, tied: false };
-    if (counts.b > counts.a) return { ...m, winner: m.bId, tied: false };
-    if (counts.a === 0 && counts.b === 0) {
-      // nobody voted on this matchup at all — don't force an endless
-      // reshuffle over a 0-0 "tie"; the organizer chose to close anyway,
-      // so just flip a coin rather than stall the bracket forever.
-      return { ...m, winner: Math.random() < 0.5 ? m.aId : m.bId, tied: false, undecided: true };
-    }
-    return { ...m, winner: null, tied: true };
-  });
-}
-function reshuffleTied(matchups) {
-  const tiedOnes = matchups.filter((m) => m.tied);
-  if (tiedOnes.length === 0) return matchups;
-  const pool = shuffle(tiedOnes.flatMap((m) => [{ id: m.aId, title: m.aTitle }, { id: m.bId, title: m.bTitle }]));
-  const newPairs = [];
-  for (let i = 0; i < pool.length; i += 2) {
-    newPairs.push({ id: genId(), aId: pool[i].id, aTitle: pool[i].title, bId: pool[i + 1].id, bTitle: pool[i + 1].title, votes: {}, winner: null, tied: false });
-  }
-  let idx = 0;
-  return matchups.map((m) => (m.tied ? newPairs[idx++] : m));
-}
-function tallyFinalFour(finalFour, finalFourVotes) {
-  const counts = {};
-  finalFour.forEach((m) => { counts[m.id] = 0; });
-  Object.values(finalFourVotes).forEach((picks) => {
-    (picks || []).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
-  });
-  return counts;
-}
+// Bracket-building, vote-tallying, and reshuffle logic now lives server-side
+// in Code.gs, so every device's actions run through the same atomic,
+// serialized operation regardless of who's clicking what. See Code.gs for
+// the authoritative version of this logic.
 
 // ---------- API layer ----------
 async function apiGet(action, params = {}) {
@@ -174,9 +110,7 @@ async function removeRosterName(name) {
 
 async function setNightArchived(id, archived) {
   try {
-    const res = await apiGet("getNight", { id });
-    if (!res.night) return;
-    await apiPost("updateNight", { night: { ...res.night, archived } });
+    await apiPost("setArchived", { nightId: id, archived });
     refreshHome();
   } catch (e) {
     setState({ err: "Couldn't update that movie night." });
@@ -213,7 +147,7 @@ async function fetchNight(id) {
     const res = await apiGet("getNight", { id });
     // Don't let a poll overwrite the screen mid-action — a vote/entry click
     // that's still saving would otherwise flicker or appear to revert.
-    if (res.night && mutationInFlight === 0) setState({ night: res.night });
+    if (res.night && pendingMutations === 0) setState({ night: res.night });
   } catch (e) { /* ignore transient poll errors */ }
 }
 function goHome() {
@@ -239,158 +173,115 @@ async function createNight({ name, theme, bracketSize }) {
   }
 }
 
-let mutationInFlight = 0;
+let pendingMutations = 0;
 let mutationQueue = Promise.resolve();
 
-// All saves funnel through this queue so they run strictly one at a time.
-// Without this, two quick actions (e.g. adding two films back to back) could
-// each fetch "the latest" before the other had finished saving, and whichever
-// save landed last would silently overwrite the other's addition.
-function enqueueMutation(fn) {
-  const run = mutationQueue.then(fn, fn);
-  mutationQueue = run.then(() => {}, () => {}); // keep the chain alive even after an error
-  return run;
-}
-
-async function persistMutation(mutator) {
-  if (!state.night) return;
-  const nightId = state.night.id;
-  mutationInFlight++;
-  try {
-    let base = state.night;
+// Every save funnels through this queue, one at a time, and hits a small
+// atomic endpoint on the server rather than pushing a whole rebuilt document.
+// pendingMutations is incremented synchronously the moment an action is
+// queued (not when it starts running), so a poll can never land in the gap
+// between "the UI shows this change" and "the server confirms it."
+function runMutation(work) {
+  pendingMutations++;
+  const run = mutationQueue.then(async () => {
     try {
-      const res = await apiGet("getNight", { id: nightId });
-      if (res.night) base = res.night;
-    } catch (e) {
-      // fall back to local state if the fresh fetch fails; still better than nothing
-    }
-    const next = mutator(base);
-    setState({ night: next });
-    try {
-      await apiPost("updateNight", { night: next });
+      const res = await work();
+      if (res && res.night) setState({ night: res.night });
     } catch (e) {
       setState({ err: "Couldn't save that — refreshing." });
-      fetchNight(nightId);
+      if (state.night) fetchNight(state.night.id);
+    } finally {
+      pendingMutations--;
     }
-  } finally {
-    mutationInFlight--;
-  }
-}
-
-// Fetch-first: used for less-frequent, organizer-driven actions (advancing a
-// round, reshuffling, locking submissions) where a beat of latency before
-// anything visibly changes is fine.
-async function updateNight(mutator) {
-  if (!state.night) return;
-  return enqueueMutation(() => persistMutation(mutator));
-}
-
-// Optimistic-first: for frequent, per-person actions (casting a vote,
-// submitting a film) where instant feedback matters most. Shows the change
-// immediately (unqueued, just for responsiveness), then the actual save is
-// queued behind any other in-flight saves so they land in the right order.
-async function updateNightFast(mutator) {
-  if (!state.night) return;
-  setState({ night: mutator(state.night) });
-  return enqueueMutation(() => persistMutation(mutator));
+  });
+  mutationQueue = run;
+  return run;
 }
 
 // ---------- actions ----------
 async function submitEntry(title) {
-  await updateNightFast((cur) => ({ ...cur, entries: [...cur.entries, { id: genId(), title, submittedBy: state.identity.name }] }));
+  if (!state.night) return;
+  const nightId = state.night.id;
+  const submittedBy = state.identity.name;
+  setState({ night: { ...state.night, entries: [...state.night.entries, { id: genId(), title, submittedBy }] } });
+  runMutation(() => apiPost("addEntry", { nightId, title, submittedBy }));
 }
 async function removeEntry(entryId) {
-  await updateNightFast((cur) => ({ ...cur, entries: cur.entries.filter((e) => e.id !== entryId) }));
+  if (!state.night) return;
+  const nightId = state.night.id;
+  setState({ night: { ...state.night, entries: state.night.entries.filter((e) => e.id !== entryId) } });
+  runMutation(() => apiPost("removeEntry", { nightId, entryId }));
 }
 async function editEntry(entryId, newTitle) {
-  await updateNightFast((cur) => ({ ...cur, entries: cur.entries.map((e) => (e.id === entryId ? { ...e, title: newTitle } : e)) }));
+  if (!state.night) return;
+  const nightId = state.night.id;
+  setState({ night: { ...state.night, entries: state.night.entries.map((e) => (e.id === entryId ? { ...e, title: newTitle } : e)) } });
+  runMutation(() => apiPost("editEntry", { nightId, entryId, title: newTitle }));
 }
 async function lockSubmissions() {
+  if (!state.night) return;
   const night = state.night;
-  if (night.bracketSize === 4) {
-    if (night.entries.length < 4) return;
-    const finalFour = shuffle(night.entries).slice(0, 4).map((e) => ({ id: e.id, title: e.title }));
-    await updateNight((cur) => ({ ...cur, phase: "final-four", finalFour }));
-    return;
-  }
-  if (night.entries.length === 0) return;
-  const round1 = buildRound1(night.entries, night.bracketSize);
-  await updateNight((cur) => ({ ...cur, phase: "bracket", rounds: [round1], currentRoundIndex: 0 }));
+  if (night.bracketSize === 4 && night.entries.length < 4) return;
+  if (night.bracketSize !== 4 && night.entries.length === 0) return;
+  runMutation(() => apiPost("lockSubmissions", { nightId: night.id }));
 }
 async function castVote(matchupId, side) {
-  await updateNightFast((cur) => {
-    const rounds = cur.rounds.map((r, i) => {
-      if (i !== cur.currentRoundIndex) return r;
-      return r.map((m) => (m.id === matchupId ? { ...m, votes: { ...m.votes, [state.identity.name]: side } } : m));
-    });
-    return { ...cur, rounds };
+  if (!state.night) return;
+  const nightId = state.night.id;
+  const voterName = state.identity.name;
+  setState({
+    night: {
+      ...state.night,
+      rounds: state.night.rounds.map((r, i) =>
+        i === state.night.currentRoundIndex
+          ? r.map((m) => (m.id === matchupId ? { ...m, votes: { ...m.votes, [voterName]: side } } : m))
+          : r
+      ),
+    },
   });
+  runMutation(() => apiPost("castVote", { nightId, matchupId, voterName, side }));
 }
 async function closeRound() {
-  await updateNight((cur) => {
-    const rounds = cur.rounds.map((r, i) => (i === cur.currentRoundIndex ? closeRoundVotes(r) : r));
-    return { ...cur, rounds };
-  });
+  if (!state.night) return;
+  runMutation(() => apiPost("closeRound", { nightId: state.night.id }));
 }
 async function doReshuffle() {
-  await updateNight((cur) => {
-    const rounds = cur.rounds.map((r, i) => (i === cur.currentRoundIndex ? reshuffleTied(r) : r));
-    return { ...cur, rounds };
-  });
+  if (!state.night) return;
+  runMutation(() => apiPost("reshuffle", { nightId: state.night.id }));
 }
 async function advanceRound() {
-  await updateNight((cur) => {
-    const currentRound = cur.rounds[cur.currentRoundIndex];
-    const winners = currentRound.map((m) => ({ id: m.winner, title: m.winner === m.aId ? m.aTitle : m.bTitle }));
-    if (winners.length === 4) return { ...cur, phase: "final-four", finalFour: winners };
-    const nextRound = buildNextRound(currentRound);
-    return { ...cur, rounds: [...cur.rounds, nextRound], currentRoundIndex: cur.currentRoundIndex + 1 };
-  });
+  if (!state.night) return;
+  runMutation(() => apiPost("advanceRound", { nightId: state.night.id }));
 }
 async function submitFinalFourBallot(picks) {
-  await updateNightFast((cur) => ({ ...cur, finalFourVotes: { ...cur.finalFourVotes, [state.identity.name]: picks } }));
+  if (!state.night) return;
+  const nightId = state.night.id;
+  const voterName = state.identity.name;
+  setState({ night: { ...state.night, finalFourVotes: { ...state.night.finalFourVotes, [voterName]: picks } } });
+  runMutation(() => apiPost("submitBallot", { nightId, voterName, picks }));
 }
 async function revealResults() {
-  await updateNight((cur) => {
-    const counts = tallyFinalFour(cur.finalFour, cur.finalFourVotes);
-    const results = cur.finalFour.map((m) => ({ ...m, votes: counts[m.id] || 0 })).sort((a, b) => b.votes - a.votes);
-    const top = results[0].votes;
-    const tiedTop = results.filter((r) => r.votes === top);
-    if (tiedTop.length > 1) {
-      return { ...cur, phase: "tiebreaker", results, tiebreaker: { options: tiedTop.map((t) => ({ id: t.id, title: t.title })), votes: {}, tied: false } };
-    }
-    return { ...cur, phase: "complete", results };
-  });
+  if (!state.night) return;
+  runMutation(() => apiPost("revealResults", { nightId: state.night.id }));
 }
 async function castTiebreakerVote(optionId) {
-  await updateNightFast((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: { ...cur.tiebreaker.votes, [state.identity.name]: optionId } } }));
+  if (!state.night) return;
+  const nightId = state.night.id;
+  const voterName = state.identity.name;
+  setState({ night: { ...state.night, tiebreaker: { ...state.night.tiebreaker, votes: { ...state.night.tiebreaker.votes, [voterName]: optionId } } } });
+  runMutation(() => apiPost("castTiebreakerVote", { nightId, voterName, optionId }));
 }
 async function closeTiebreaker() {
-  await updateNight((cur) => {
-    const counts = {};
-    cur.tiebreaker.options.forEach((o) => { counts[o.id] = 0; });
-    Object.values(cur.tiebreaker.votes).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
-    const tallied = cur.tiebreaker.options.map((o) => ({ ...o, votes: counts[o.id] || 0 })).sort((a, b) => b.votes - a.votes);
-    const top = tallied[0].votes;
-    const stillTied = tallied.filter((t) => t.votes === top);
-    if (stillTied.length > 1) {
-      return { ...cur, tiebreaker: { ...cur.tiebreaker, tied: true } };
-    }
-    const winnerId = tallied[0].id;
-    // keep original approval counts for display, just float the tiebreaker winner to the top
-    const reordered = [...cur.results].sort((a, b) => {
-      if (a.id === winnerId) return -1;
-      if (b.id === winnerId) return 1;
-      return b.votes - a.votes;
-    });
-    return { ...cur, phase: "complete", results: reordered, tiebreakerWinnerId: winnerId, tiebreakerTally: tallied };
-  });
+  if (!state.night) return;
+  runMutation(() => apiPost("closeTiebreaker", { nightId: state.night.id }));
 }
 async function revoteTiebreaker() {
-  await updateNight((cur) => ({ ...cur, tiebreaker: { ...cur.tiebreaker, votes: {}, tied: false } }));
+  if (!state.night) return;
+  runMutation(() => apiPost("revoteTiebreaker", { nightId: state.night.id }));
 }
 async function transferOrganizer(newOrganizer) {
-  await updateNight((cur) => ({ ...cur, organizer: newOrganizer }));
+  if (!state.night) return;
+  runMutation(() => apiPost("transferOrganizer", { nightId: state.night.id, newOrganizer }));
   setState({ organizerTransferOpen: false });
 }
 
